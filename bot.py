@@ -1,5 +1,5 @@
 # bot.py
-# Deploy-ready Telegram SMM Bot (sqlite). Uses env vars for secrets.
+# Copy-paste ready. YOUR TOKEN & OWNER_ID are already filled in below.
 import os
 import sqlite3
 import logging
@@ -13,21 +13,20 @@ from telegram.ext import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- CONFIG (from ENV)
-BOT_TOKEN = os.getenv("BOT_TOKEN")                  # e.g. 8357....:AA...
-VIP_API_KEY = os.getenv("VIP_API_KEY")              # SMM panel API key
-OWNER_ID = int(os.getenv("OWNER_ID", "0"))          # your numeric telegram id
-QR_URL = os.getenv("QR_URL", "")                    # direct link to QR image (optional)
-UPI_ID = os.getenv("UPI_ID", "arshjunaid@slc")
-SERVICE_VIEWS = os.getenv("SERVICE_VIEWS", "10837")
-SERVICE_REACTIONS = os.getenv("SERVICE_REACTIONS", "11244")
-SERVICE_MEMBERS = os.getenv("SERVICE_MEMBERS", "10776")
-REQUIRED_CHANNELS = os.getenv("REQUIRED_CHANNELS", "@trickyhubv2,@primate004")
-REQUIRED_CHANNELS = [c.strip() for c in REQUIRED_CHANNELS.split(",")]
+# ----------------- CONFIG (already filled by you) -----------------
+BOT_TOKEN = "7886209014:AAFYGnTf0T41y72z5h-DTJcNQQj-mYW4mdo"   # your token (you provided)
+VIP_API_KEY = "2b0d769f994484804721e0488ea7fbf8"             # your panel API key (you provided earlier)
+OWNER_ID = 883754833                                         # your numeric telegram id (you provided)
+QR_URL = ""                                                  # optional: paste direct link to QR image (postimg/imgbb)
+UPI_ID = "arshjunaid@slc"
+SERVICE_VIEWS = "10837"
+SERVICE_REACTIONS = "11244"
+SERVICE_MEMBERS = "10776"
+REQUIRED_CHANNELS = ["@trickyhubv2", "@primate004"]
+DB_PATH = "bot.db"
+# -----------------------------------------------------------------
 
-DB_PATH = os.getenv("DB_PATH", "bot.db")
-
-# --- DB init
+# DB init
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cur = conn.cursor()
 cur.execute("""CREATE TABLE IF NOT EXISTS users (
@@ -48,7 +47,7 @@ cur.execute("""CREATE TABLE IF NOT EXISTS orders (
 )""")
 conn.commit()
 
-# --- Helpers
+# Helpers
 def ensure_user(uid, username=None):
     cur.execute("SELECT user_id FROM users WHERE user_id=?", (uid,))
     if not cur.fetchone():
@@ -74,7 +73,7 @@ def place_smm(service_id, link, qty):
         logger.exception("SMM API error")
         return {"error": str(e)}
 
-# --- Handlers
+# Handlers
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     ensure_user(user.id, user.username)
@@ -92,7 +91,6 @@ async def verify_join_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     uid = query.from_user.id
 
-    # check join on each channel
     for ch in REQUIRED_CHANNELS:
         try:
             member = await context.bot.get_chat_member(chat_id=ch, user_id=uid)
@@ -100,10 +98,9 @@ async def verify_join_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("❌ You must join all required channels to continue.")
                 return
         except Exception:
-            await query.edit_message_text("❌ Could not verify join status. Ensure the channels are public or add bot as admin.")
+            await query.edit_message_text("❌ Could not verify join status. Ensure channels are public or add bot as admin.")
             return
 
-    # show menu
     menu = [
         [InlineKeyboardButton("💰 Add Funds", callback_data="add_funds")],
         [InlineKeyboardButton("📈 Post Views", callback_data="buy_views"),
@@ -114,26 +111,24 @@ async def verify_join_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await query.edit_message_text("🎉 Access Granted! Choose:", reply_markup=InlineKeyboardMarkup(menu))
 
-# Add funds flow
+# Add funds
 async def add_funds_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    text = f"💸 Send payment to UPI: `{UPI_ID}`\n\nAfter payment, reply here with Transaction ID (UTR) + screenshot.\nAdmin will manually verify and credit your wallet."
+    text = f"💸 Send payment to UPI: `{UPI_ID}`\nAfter payment, reply here with Transaction ID (UTR) + screenshot. Admin will verify and credit your wallet."
     if QR_URL:
         await query.message.reply_photo(photo=QR_URL, caption=text, parse_mode="Markdown")
     else:
         await query.message.reply_text(text, parse_mode="Markdown")
 
-# Payment claim handler: simple heuristic
 async def payments_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user = update.effective_user
     if len(text) >= 6:
         await update.message.reply_text("✅ Payment claim received. Admin will verify and credit your wallet after confirmation.")
-        # notify owner
         try:
             await context.bot.send_message(chat_id=OWNER_ID,
-                text=f"🔔 Payment claim\nUser: @{user.username} ({user.id})\nClaim: {text}\nPlease verify and use /addbalance <user_id> <amount>")
+                text=f"🔔 Payment claim\nUser: @{user.username} ({user.id})\nClaim: {text}\nVerify & use /addbalance <user_id> <amount>")
         except Exception:
             logger.exception("Failed to notify owner")
     else:
@@ -155,7 +150,7 @@ async def buy_members_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.message.reply_text("Send target channel/group link where members will be added:")
     context.user_data["flow"] = "members_wait_link"
 
-# When user sends text
+# Text handler (link/qty/payment)
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     uid = user.id
@@ -184,7 +179,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # cost calculation
         if flow == "views_wait_qty":
-            unit_cost = 0.000657   # ₹0.657 per 1000 => per 1 = 0.000657
+            unit_cost = 0.000657
             svc = SERVICE_VIEWS
             svc_name = "Post Views"
         elif flow == "reactions_wait_qty":
@@ -202,7 +197,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ Insufficient balance. Required ₹{cost:.2f}, Your balance: ₹{bal:.2f}")
             return
 
-        # place order via SMM
         resp = place_smm(svc, link, qty)
         if resp and resp.get("order"):
             order_id = str(resp["order"])
@@ -211,7 +205,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cur.execute("UPDATE users SET balance = balance - ? WHERE user_id=?", (cost, uid))
             conn.commit()
             await update.message.reply_text(f"✅ Order placed!\nService: {svc_name}\nQty: {qty}\nOrder ID: {order_id}\nDeducted: ₹{cost:.2f}")
-            # notify admin
             try:
                 await context.bot.send_message(chat_id=OWNER_ID, text=f"🆕 Order placed by @{user.username} ({uid})\n{svc_name} | {qty} | id:{order_id}")
             except Exception:
@@ -222,14 +215,13 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("pending_link", None)
         return
 
-    # fallback: treat as possible payment id
+    # fallback -> treat as payment claim
     await payments_handler(update, context)
 
-# Confirm & change link callbacks
+# link callbacks
 async def link_confirmed_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
     flow = context.user_data.get("flow", "")
-    # move to qty step
     if "views" in flow:
         context.user_data["flow"] = "views_wait_qty"
     elif "reactions" in flow:
@@ -238,7 +230,7 @@ async def link_confirmed_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["flow"] = "members_wait_qty"
     else:
         context.user_data["flow"] = "views_wait_qty"
-    await update.callback_query.message.reply_text("Enter the quantity (number):")
+    await update.callback_query.message.reply_text("Now enter the quantity (number):")
 
 async def change_link_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
@@ -253,7 +245,7 @@ async def change_link_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["flow"] = "views_wait_link"
     await update.callback_query.message.reply_text("Send the corrected link now:")
 
-# Balance & orders
+# balance & orders
 async def my_balance_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
     uid = update.callback_query.from_user.id
@@ -273,7 +265,7 @@ async def my_orders_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{s} | {q} | ₹{cost:.2f} | {st} | id:{oid}\n\n"
     await update.callback_query.message.reply_text(text)
 
-# Admin commands
+# admin
 async def cmd_addbalance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID:
         await update.message.reply_text("Unauthorized.")
@@ -310,14 +302,13 @@ async def cmd_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += "|".join(str(x) for x in r) + "\n"
     await update.message.reply_text(msg)
 
-# --- App init
+# App startup
 def main():
     if not BOT_TOKEN:
-        logger.error("BOT_TOKEN missing. Set env var.")
+        logger.error("BOT_TOKEN missing.")
         return
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # commands
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CallbackQueryHandler(verify_join_cb, pattern="^verify_join$"))
     app.add_handler(CallbackQueryHandler(add_funds_cb, pattern="^add_funds$"))
@@ -329,14 +320,11 @@ def main():
     app.add_handler(CallbackQueryHandler(my_balance_cb, pattern="^my_balance$"))
     app.add_handler(CallbackQueryHandler(my_orders_cb, pattern="^my_orders$"))
 
-    # admin commands
     app.add_handler(CommandHandler("addbalance", cmd_addbalance))
     app.add_handler(CommandHandler("users", cmd_users))
     app.add_handler(CommandHandler("orders", cmd_orders))
 
-    # messages
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-    # payment claims heuristic (UTR-like)
     app.add_handler(MessageHandler(filters.Regex(r"^[A-Za-z0-9\-_]{6,}$") & ~filters.COMMAND, payments_handler))
 
     logger.info("Bot starting...")
